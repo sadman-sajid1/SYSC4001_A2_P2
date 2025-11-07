@@ -8,61 +8,60 @@
 #include <sys/shm.h>
 #include <sys/sem.h>
 
-struct Shared
-{
-    int multiple;
-    int counter;
+struct SharedMem {
+    int multipleNum;
+    int mainCounter;
 };
 
-static struct sembuf P = {0, -1, 0};
-static struct sembuf V = {0, 1, 0};
+static struct sembuf lockOp = {0, -1, 0};
+static struct sembuf unlockOp = {0, 1, 0};
 
 int main(int argc, char **argv)
 {
-    if (argc < 3)
-    {
+    if (argc < 3) {
         fprintf(stderr, "Usage: %s <shmid> <semid>\n", argv[0]);
         return 1;
     }
 
     setbuf(stdout, NULL);
 
-    int shmid = atoi(argv[1]);
-    int semid = atoi(argv[2]);
+    int sharedId = atoi(argv[1]);
+    int semId = atoi(argv[2]);
 
-    struct Shared *sh = (struct Shared *)shmat(shmid, NULL, 0);
-    if (sh == (void *)-1)
-    {
+    struct SharedMem *shared = (struct SharedMem *)shmat(sharedId, NULL, 0);
+    if (shared == (void *)-1) {
         perror("shmat failed");
         return 1;
     }
 
-    while (1)
-    {
-        semop(semid, &P, 1);
-        int c = sh->counter;
-        semop(semid, &V, 1);
-        if (c > 100)
+    // wait until counter > 100
+    while (1) {
+        semop(semId, &lockOp, 1);
+        int counterVal = shared->mainCounter;
+        semop(semId, &unlockOp, 1);
+
+        if (counterVal > 100)
             break;
-        usleep(100000);
+
+        usleep(100000); // tiny delay
     }
 
-    while (1)
-    {
-        semop(semid, &P, 1);
-        sh->counter++;
-        int c = sh->counter;
-        int m = sh->multiple;
-        semop(semid, &V, 1);
+    while (1) {
+        semop(semId, &lockOp, 1);
+        shared->mainCounter++;
+        int current = shared->mainCounter;
+        int multi = shared->multipleNum;
+        semop(semId, &unlockOp, 1);
 
-        if (c % m == 0)
-            printf("[CHILD ] counter=%d (multiple=%d)\n", c, m);
+        if (current % multi == 0)
+            printf("[CHILD ] counter=%d (multiple=%d)\n", current, multi);
 
-        if (c > 500)
+        if (current > 500)
             break;
-        usleep(100000);
+
+        usleep(100000); // tiny delay
     }
 
-    shmdt(sh);
+    shmdt(shared);
     return 0;
 }
