@@ -9,66 +9,69 @@
 #include <sys/sem.h>
 #include <sys/wait.h>
 
-struct Shared
+struct SharedMem
 {
-    int multiple;
-    int counter;
+    int multipleNum;
+    int mainCounter;
 };
-union semun
+
+union sem_union
 {
     int val;
     struct semid_ds *buf;
     unsigned short *array;
 };
 
-int main(void)
+int main()
 {
     setbuf(stdout, NULL);
 
-    int shmid = shmget(IPC_PRIVATE, sizeof(struct Shared), IPC_CREAT | 0600);
-    struct Shared *sh = (struct Shared *)shmat(shmid, NULL, 0);
-    sh->multiple = 3;
-    sh->counter = 0;
+    int sharedId = shmget(IPC_PRIVATE, sizeof(struct SharedMem), IPC_CREAT | 0600);
+    struct SharedMem *shared = (struct SharedMem *)shmat(sharedId, NULL, 0);
+    shared->multipleNum = 3;
+    shared->mainCounter = 0;
 
-    int semid = semget(IPC_PRIVATE, 1, IPC_CREAT | 0600);
-    union semun su;
-    su.val = 1;
-    semctl(semid, 0, SETVAL, su);
+    int semId = semget(IPC_PRIVATE, 1, IPC_CREAT | 0600);
+    union sem_union semOpt;
+    semOpt.val = 1;
+    semctl(semId, 0, SETVAL, semOpt);
 
-    struct sembuf P = {0, -1, 0};
-    struct sembuf V = {0, 1, 0};
+    struct sembuf lock = {0, -1, 0};
+    struct sembuf unlock = {0, 1, 0};
 
-    pid_t pid = fork();
-    if (pid == 0)
+    pid_t kidPid = fork();
+    if (kidPid == 0)
     {
-        char arg1[32], arg2[32];
-        snprintf(arg1, sizeof(arg1), "%d", shmid);
-        snprintf(arg2, sizeof(arg2), "%d", semid);
-        char *args[] = {"./child", arg1, arg2, NULL};
+        char sidStr[32], semStr[32];
+        snprintf(sidStr, sizeof(sidStr), "%d", sharedId);
+        snprintf(semStr, sizeof(semStr), "%d", semId);
+        char *args[] = {"./childProg", sidStr, semStr, NULL};
         execv(args[0], args);
-        perror("execv failed");
+        perror("exec failed");
         _exit(1);
     }
 
     while (1)
     {
-        semop(semid, &P, 1);
-        sh->counter++;
-        int c = sh->counter, m = sh->multiple;
-        semop(semid, &V, 1);
+        semop(semId, &lock, 1);
+        shared->mainCounter++;
+        int current = shared->mainCounter;
+        int multi = shared->multipleNum;
+        semop(semId, &unlock, 1);
 
-        if (c % m == 0)
-            printf("[PARENT] counter=%d (multiple=%d)\n", c, m);
-        if (c > 500)
+        if (current % multi == 0)
+            printf("[PARENT] counter=%d (multiple=%d)\n", current, multi);
+
+        if (current > 500)
             break;
 
-        usleep(100000);
+        usleep(100000); 
     }
 
     wait(NULL);
-    shmdt(sh);
-    shmctl(shmid, IPC_RMID, NULL);
-    semctl(semid, 0, IPC_RMID);
+    shmdt(shared);
+    shmctl(sharedId, IPC_RMID, NULL);
+    semctl(semId, 0, IPC_RMID);
 
     return 0;
 }
